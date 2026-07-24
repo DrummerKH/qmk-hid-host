@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Darwin
+import ServiceManagement
 
 private enum StatusVisualState: Hashable {
     case connected
@@ -450,6 +451,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try prepareSupportDirectories()
             try ensureInitialConfigIfNeeded()
             try prepareLogFile()
+            migrateLegacyLoginItemIfNeeded()
             syncLaunchAtLoginMenuItem()
             try startHost()
         } catch {
@@ -739,10 +741,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func syncLaunchAtLoginMenuItem() {
-        launchAtLoginMenuItem.state = fileManager.fileExists(atPath: launchAgentURL.path) ? .on : .off
+        if #available(macOS 13.0, *) {
+            launchAtLoginMenuItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        } else {
+            launchAtLoginMenuItem.state = fileManager.fileExists(atPath: launchAgentURL.path) ? .on : .off
+        }
     }
 
     private func setLaunchAtLogin(enabled: Bool) throws {
+        if #available(macOS 13.0, *) {
+            // Register the app itself via SMAppService so System Settings → Login Items
+            // shows "QMK HID Host" with its real icon, instead of attributing the login
+            // item to `/usr/bin/open` (which renders as the generic "exec" black square).
+            let service = SMAppService.mainApp
+            if enabled {
+                if service.status != .enabled {
+                    try service.register()
+                }
+            } else if service.status == .enabled {
+                try service.unregister()
+            }
+            // Drop any LaunchAgent left behind by older versions so the app isn't
+            // launched twice at login.
+            removeLegacyLaunchAgent()
+        } else {
+            try setLaunchAtLoginLegacy(enabled: enabled)
+        }
+    }
+
+    /// Pre-Ventura fallback: write a LaunchAgent that points launchd straight at the
+    /// bundle executable (never through `/usr/bin/open`).
+    private func setLaunchAtLoginLegacy(enabled: Bool) throws {
         try fileManager.createDirectory(at: launchAgentsDirectory, withIntermediateDirectories: true)
 
         if enabled {
@@ -753,26 +782,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? runLaunchCtl(["bootout", launchDomain, launchAgentURL.path])
             try runLaunchCtl(["bootstrap", launchDomain, launchAgentURL.path])
         } else {
-            try? runLaunchCtl(["bootout", launchDomain, launchAgentURL.path])
-            if fileManager.fileExists(atPath: launchAgentURL.path) {
-                try fileManager.removeItem(at: launchAgentURL)
-            }
+            removeLegacyLaunchAgent()
         }
     }
 
+    /// Migrate users coming from a build that registered the login item through `open`.
+    /// Re-register through SMAppService (so it shows as the app) and remove the stale agent.
+    private func migrateLegacyLoginItemIfNeeded() {
+        guard #available(macOS 13.0, *) else { return }
+        guard fileManager.fileExists(atPath: launchAgentURL.path) else { return }
+        do {
+            if SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+            removeLegacyLaunchAgent()
+        } catch {
+            // Keep the legacy agent if migration fails so launch-at-login still works.
+        }
+    }
+
+    private func removeLegacyLaunchAgent() {
+        guard fileManager.fileExists(atPath: launchAgentURL.path) else { return }
+        try? runLaunchCtl(["bootout", launchDomain, launchAgentURL.path])
+        try? fileManager.removeItem(at: launchAgentURL)
+    }
+
     private func launchAgentPropertyList() throws -> [String: Any] {
-        let appPath = Bundle.main.bundleURL.path
-        guard fileManager.fileExists(atPath: appPath) else {
+        guard let executablePath = Bundle.main.executableURL?.path,
+              fileManager.fileExists(atPath: executablePath) else {
             throw NSError(
                 domain: "QMKHIDHost",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "App bundle path does not exist: \(appPath)"]
+                userInfo: [NSLocalizedDescriptionKey: "App executable path could not be resolved."]
             )
         }
 
         return [
             "Label": launchAgentLabel,
-            "ProgramArguments": ["/usr/bin/open", "-g", appPath],
+            "ProgramArguments": [executablePath],
             "RunAtLoad": true,
         ]
     }
