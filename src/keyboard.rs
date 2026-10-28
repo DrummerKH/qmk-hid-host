@@ -112,7 +112,7 @@ fn start_write(name: &String, device: HidDevice, is_connected: &Arc<AtomicBool>,
         std::thread::sleep(std::time::Duration::from_millis(10)); // lowers host CPU usage by order of magnitude
 
         if let Ok(mut received) = host_to_device_receiver.blocking_recv() {
-            tracing::info!("{}: sending {:?}", name, received);
+            tracing::debug!("{}: sending {:?}", name, received);
             received.truncate(32);
             received.resize_with(32, Default::default);
             received.insert(0, 0);
