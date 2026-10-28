@@ -15,6 +15,8 @@ pub struct Config {
     pub reconnect_delay: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weather: Option<WeatherConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<bool>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -51,6 +53,7 @@ pub fn load_config(path: PathBuf) -> &'static Config {
         layouts: default_layouts(),
         reconnect_delay: None,
         weather: None,
+        media: None,
     };
 
     if let Ok(file) = std::fs::read_to_string(&path) {

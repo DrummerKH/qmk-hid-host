@@ -96,6 +96,7 @@ Default configuration is set to [stront](https://github.com/zzeneg/stront). For 
 - `layouts` - list of supported keyboard layouts in two-letter format (app sends layout's index, not name)
 - `reconnectDelay` - delay between reconnecting attempts in milliseconds (optional, default is 5000)
 - `weather` - optional weather provider config for Linux and MacOS. The URL should return a temperature value, for example `wttr.in/Hamburg?format=%t`
+- `media` - set to `false` to disable the media provider (optional, default is `true`). On macOS it polls Spotify via `osascript` every second, so disable it if your keyboard doesn't show media info
 
 #### Minimal config
 
